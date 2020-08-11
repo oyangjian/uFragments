@@ -16,9 +16,11 @@ contract Orchestrator is Ownable {
         bool enabled;
         address destination;
         bytes data;
+        uint256 gasLimit; // todo: is it ok to modify struct storage layout?
+        mapping (bytes32 => bool) revertOK; // todo: is it ok to leave garbage on transaction removal?
     }
 
-    event TransactionFailed(address indexed destination, uint index, bytes data);
+    event TransactionFailed(address indexed destination, uint index, bytes data, string reason);
 
     // Stable ordering is not guaranteed.
     Transaction[] public transactions;
@@ -46,35 +48,107 @@ contract Orchestrator is Ownable {
     {
         require(msg.sender == tx.origin);  // solhint-disable-line avoid-tx-origin
 
+        // call monetary policy rebase, always revert on failure
         policy.rebase();
 
-        for (uint i = 0; i < transactions.length; i++) {
-            Transaction storage t = transactions[i];
-            if (t.enabled) {
-                bool result =
-                    externalCall(t.destination, t.data);
-                if (!result) {
-                    emit TransactionFailed(t.destination, i, t.data);
-                    revert("Transaction Failed");
-                }
-            }
+        // call peripheral contracts, handle reverts based on policy
+        for (uint index = 0; index < transactions.length; index++) {
+            _executePeripheralTransaction(index);
         }
     }
+
+    /**
+     * @notice Get the revert message and code from a call.
+     * @param index uint256 Index of the transaction.
+     * @return revertMessage string Revert message.
+     * @return revertCode bytes32 Revert code.
+     */
+    function _executePeripheralTransaction(uint256 index) internal returns (bool, bytes[] memory) {
+        // declare storage reference
+        Transaction storage transaction = transactions[index];
+
+        // validate sufficient gas left
+        require(gasleft() > transaction.gasLimit);
+
+        // perform external call
+        // todo: @thegostep solc v0.4 does not return revert string on call
+        // todo: @thegostep solc v0.4 does not support specifying gaslimit on call
+        // decide if upgrade solc or implement in assembly
+        // https://solidity.readthedocs.io/en/v0.4.24/units-and-global-variables.html#address-related
+        (bool success, bytes memory res) = address(transaction.destination).call(transaction.data);
+
+        // Check if any of the atomic transactions failed, if not, decode return data
+        bytes[] memory returnData;
+        if (!success) {
+            // parse revert message
+            (string memory revertMessage, bytes32 revertCode) = _getRevertMsg(res);
+            // if approved revert, log it and continue
+            if (transaction.revertOK[revertCode]) {
+                emit TransactionFailed(transaction.destination, index, transaction.data, revertMessage);
+            } 
+            // else revert batch
+            else {
+                revert("Transaction Failed");
+            }
+        } else {
+            // decode and return call return values
+            returnData = abi.decode(res, (bytes[]));
+        }
+
+        // explicit return
+        return (success, returnData);
+	}
+
+    /**
+     * @notice Get the revert message and code from a call.
+     * @param res bytes Response of the call.
+     * @return revertMessage string Revert message.
+     * @return revertCode bytes32 Revert code.
+     */
+	function _getRevertMsg(bytes memory res) internal pure returns (string memory revertMessage, bytes32 revertCode) {
+        // If there is no prefix to the revert reason, we know it was an OOG error
+        if (res.length == 0) {
+            revertMessage = "Transaction out of gas";
+        }
+		// If the revert reason length is less than 68, then the transaction failed silently (without a revert message)
+		else if (res.length < 68) {
+            revertMessage = "Transaction reverted silently";
+        }
+        // Else extract revert message
+        else {
+	        bytes memory revertData = res.slice(4, res.length - 4); // Remove the selector which is the first 4 bytes
+		    revertMessage = abi.decode(revertData, (string)); // All that remains is the revert string
+        }
+        // obtain revert code
+        revertCode = keccak256(revertMessage);
+        // explicit return
+        return (revertMessage, revertCode);
+	}
 
     /**
      * @notice Adds a transaction that gets called for a downstream receiver of rebases
      * @param destination Address of contract destination
      * @param data Transaction data payload
+     * @param gasLimit Transaction gas limit
+     * @param revertOKs Transaction approved revert codes
      */
-    function addTransaction(address destination, bytes data)
+    function addTransaction(address destination, bytes data, uint256 gasLimit, bytes32[] revertOKs)
         external
         onlyOwner
     {
-        transactions.push(Transaction({
+        // craft transaction object
+        Transaction memory transaction = Transaction({
             enabled: true,
             destination: destination,
-            data: data
-        }));
+            data: data,
+            gasLimit: gasLimit
+        });
+        // push transaction to storage
+        transactions.push(transaction);
+        // assign valid revert strings
+        for (uint256 index = 0; index < revertOKs.length; index++) {
+            transactions[transactions.length - 1].revertOK[revertOKs[index]] = true;
+        }
     }
 
     /**
