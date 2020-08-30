@@ -68,9 +68,11 @@ contract UFragmentsPolicy is Ownable {
     // The rebase lag parameter, used to dampen the applied supply adjustment by 1 / rebaseLag
     // Check setRebaseLag comments for more details.
     // Natural number, no decimal places.
+    // rebaseLag= 10
     uint256 public rebaseLag;
 
     // More than this much time must pass between rebase operations.
+    // 24hours
     uint256 public minRebaseTimeIntervalSec;
 
     // Block timestamp of last rebase operation
@@ -78,9 +80,12 @@ contract UFragmentsPolicy is Ownable {
 
     // The rebase window begins this many seconds into the minRebaseTimeInterval period.
     // For example if minRebaseTimeInterval is 24hrs, it represents the time of day in seconds.
+    // 7200sec = 2hours 2:00 am
+    // 2:00 AM (2:00) International = 10:00 AM (10:00) China
     uint256 public rebaseWindowOffsetSec;
 
     // The length of the time window where a rebase operation is allowed to execute, in seconds.
+    // 20min
     uint256 public rebaseWindowLengthSec;
 
     // The number of rebase cycles since inception
@@ -125,13 +130,16 @@ contract UFragmentsPolicy is Ownable {
 
         uint256 cpi;
         bool cpiValid;
+        // cpi=110.21e18
         (cpi, cpiValid) = cpiOracle.getData();
         require(cpiValid);
 
+        // targetRate=1.003239393939394e+18
         uint256 targetRate = cpi.mul(10 ** DECIMALS).div(baseCpi);
 
         uint256 exchangeRate;
         bool rateValid;
+        // exchangeRage=0.7694186438892614e+18
         (exchangeRate, rateValid) = marketOracle.getData();
         require(rateValid);
 
@@ -289,6 +297,7 @@ contract UFragmentsPolicy is Ownable {
         epoch = 0;
 
         uFrags = uFrags_;
+        // baseCpi_ = 100e18
         baseCpi = baseCpi_;
         // cryptoWeight = 50% = 0.5e18 = 50e16
         cryptoWeight = 50 * 10 ** (DECIMALS-2);
