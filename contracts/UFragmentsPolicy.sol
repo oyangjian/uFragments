@@ -31,6 +31,7 @@ contract UFragmentsPolicy is Ownable {
         uint256 indexed epoch,
         uint256 exchangeRate,
         uint256 cpi,
+        uint256 cryptoRate,
         int256 requestedSupplyAdjustment,
         uint256 timestampSec
     );
@@ -43,6 +44,17 @@ contract UFragmentsPolicy is Ownable {
     // Market oracle provides the token/USD exchange rate as an 18 decimal fixed point number.
     // (eg) An oracle value of 1.5e18 it would mean 1 Ample is trading for $1.50.
     IOracle public marketOracle;
+
+    // Crypto oracle provides the main cryptocurrency market value daily change as an 18 decimal fixed point number.
+    // (eg) An oracle value of 1.5e18 it would mean the main cryptocurrency market value has increased 50% for the last day.
+    // (eg) An oracle value of 0.8e18 it would mean down 20%.
+    IOracle public cryptoOracle;
+
+    // the main cryptocurrency market value daily changement influence percentage weight
+    // as an 18 decimal fixed point number.
+    // (eg) An cryptoWeight value of 0.5e18 means 50%.
+    // (eg) An cryptoWeight value of 0.2e18 means 20%.
+    uint256 public cryptoWeight;
 
     // CPI value at the time of launch, as an 18 decimal fixed point number.
     uint256 private baseCpi;
@@ -81,6 +93,8 @@ contract UFragmentsPolicy is Ownable {
     uint256 private constant MAX_RATE = 10**6 * 10**DECIMALS;
     // MAX_SUPPLY = MAX_INT256 / MAX_RATE
     uint256 private constant MAX_SUPPLY = ~(uint256(1) << 255) / MAX_RATE;
+    // crypto rate limit to (0-100%)
+    uint256 private constant MAX_CRYPTO_RATE_ORIGINAL = 2 * 10**DECIMALS;
 
     // This module orchestrates the rebase execution and downstream notification.
     address public orchestrator;
@@ -125,7 +139,17 @@ contract UFragmentsPolicy is Ownable {
             exchangeRate = MAX_RATE;
         }
 
-        int256 supplyDelta = computeSupplyDelta(exchangeRate, targetRate);
+        uint256 cryptoRate = 1 * 10 ** DECIMALS;
+        bool cryptoRateValid;
+        (cryptoRate, cryptoRateValid) = cryptoOracle.getData();
+        require(cryptoRateValid);
+
+        // cryptoRate-1 limit to (-1, 1), means (-100%, 100%)
+        if (cryptoRate > MAX_CRYPTO_RATE_ORIGINAL) {
+            cryptoRate = MAX_CRYPTO_RATE_ORIGINAL;
+        }
+
+        int256 supplyDelta = computeSupplyDelta2(exchangeRate, targetRate, cryptoRate);
 
         // Apply the Dampening factor.
         supplyDelta = supplyDelta.div(rebaseLag.toInt256Safe());
@@ -136,7 +160,7 @@ contract UFragmentsPolicy is Ownable {
 
         uint256 supplyAfterRebase = uFrags.rebase(epoch, supplyDelta);
         assert(supplyAfterRebase <= MAX_SUPPLY);
-        emit LogRebase(epoch, exchangeRate, cpi, supplyDelta, now);
+        emit LogRebase(epoch, exchangeRate, cpi, cryptoRate, supplyDelta, now);
     }
 
     /**
@@ -159,6 +183,21 @@ contract UFragmentsPolicy is Ownable {
         onlyOwner
     {
         marketOracle = marketOracle_;
+    }
+
+    function setCryptoOracle(IOracle cryptoOracle_)
+        external
+        onlyOwner
+    {
+        cryptoOracle = cryptoOracle_;
+    }
+
+    function setCryptoWeight(uint256 cryptoWeight_)
+        external
+        onlyOwner
+    {
+        require(cryptoWeight_ <= 1 * 10 ** DECIMALS);
+        cryptoWeight = cryptoWeight_;
     }
 
     /**
@@ -251,6 +290,8 @@ contract UFragmentsPolicy is Ownable {
 
         uFrags = uFrags_;
         baseCpi = baseCpi_;
+        // cryptoWeight = 50% = 0.5e18 = 50e16
+        cryptoWeight = 50 * 10 ** (DECIMALS-2);
     }
 
     /**
@@ -300,5 +341,34 @@ contract UFragmentsPolicy is Ownable {
 
         return (rate >= targetRate && rate.sub(targetRate) < absoluteDeviationThreshold)
             || (rate < targetRate && targetRate.sub(rate) < absoluteDeviationThreshold);
+    }
+
+    function computeSupplyDelta2(uint256 rate, uint256 targetRate, uint256 cryptoRate)
+        private
+        view
+        returns (int256)
+    {
+        int256 oneUnit = (10 ** DECIMALS).toInt256Safe();
+        int256 cryptoRateSigned = cryptoRate.toInt256Safe() - oneUnit;
+        int256 rateSigned = rate.toInt256Safe();
+        int256 targetRateSigned = targetRate.toInt256Safe();
+        int256 totalSupply = uFrags.totalSupply().toInt256Safe();
+
+        // supplyDeltaRate1 = (10**18 - cryptoWeight) * (rate - targetRate) / targetRate
+        int256 supplyDeltaRate1 = oneUnit.sub(cryptoWeight.toInt256Safe())
+            .mul(rateSigned.sub(targetRateSigned)).div(targetRateSigned);
+
+        // supplyDeltaRate2 = cryptoWeight * cryptoRate / 10**18
+        int256 supplyDeltaRate2 = cryptoWeight.toInt256Safe().mul(cryptoRateSigned).div(oneUnit);
+
+        int256 supplyDeltaRateResult = supplyDeltaRate1.add(supplyDeltaRate2);
+
+        if (supplyDeltaRateResult >= 0 && supplyDeltaRateResult < deviationThreshold.toInt256Safe()) {
+            return 0;
+        }
+        if (supplyDeltaRateResult < 0 && supplyDeltaRateResult.abs() < deviationThreshold.toInt256Safe()) {
+            return 0;
+        }
+        return totalSupply.mul(supplyDeltaRateResult).div(oneUnit);
     }
 }
