@@ -358,7 +358,7 @@ contract UFragmentsPolicy is Ownable {
         returns (int256)
     {
         int256 oneUnit = (10 ** DECIMALS).toInt256Safe();
-        int256 cryptoRateSigned = cryptoRate.toInt256Safe() - oneUnit;
+        int256 cryptoRateSigned = cryptoRate.toInt256Safe().sub(oneUnit);
         int256 rateSigned = rate.toInt256Safe();
         int256 targetRateSigned = targetRate.toInt256Safe();
         int256 totalSupply = uFrags.totalSupply().toInt256Safe();
