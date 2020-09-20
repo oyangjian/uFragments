@@ -3,6 +3,8 @@ pragma solidity ^0.4.24;
 import "openzeppelin-eth/contracts/math/SafeMath.sol";
 import "openzeppelin-eth/contracts/ownership/Ownable.sol";
 import "openzeppelin-eth/contracts/token/ERC20/ERC20Detailed.sol";
+import "openzeppelin-eth/contracts/token/ERC20/TokenTimelock.sol";
+import "openzeppelin-eth/contracts/token/ERC20/SafeERC20.sol";
 
 import "./lib/SafeMathInt.sol";
 
@@ -37,12 +39,16 @@ contract UFragments is ERC20Detailed, Ownable {
     // f(x0) + f(x1) + ... + f(xn) is not always equal to f(x0 + x1 + ... xn).
     using SafeMath for uint256;
     using SafeMathInt for int256;
+    using SafeERC20 for IERC20;
 
     event LogRebase(uint256 indexed epoch, uint256 totalSupply);
     event LogMonetaryPolicyUpdated(address monetaryPolicy);
 
     // Used for authentication
     address public monetaryPolicy;
+
+    // Time farming reward valt, release 30 days
+    TokenTimelock public farmReservesVault;
 
     modifier onlyMonetaryPolicy() {
         require(msg.sender == monetaryPolicy);
@@ -60,7 +66,8 @@ contract UFragments is ERC20Detailed, Ownable {
 
     uint256 private constant DECIMALS = 8;
     uint256 private constant MAX_UINT256 = ~uint256(0);
-    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 50 * 10**6 * 10**DECIMALS;
+    uint256 private constant INITIAL_FRAGMENTS_SUPPLY = 2100000 * 10**DECIMALS;
+    uint256 private constant INITIAL_FARM_SUPPLY = 2000000 * 10**DECIMALS;
 
     // TOTAL_GONS is a multiple of INITIAL_FRAGMENTS_SUPPLY so that _gonsPerFragment is an integer.
     // Use the highest value that fits in a uint256 for max granularity.
@@ -130,7 +137,7 @@ contract UFragments is ERC20Detailed, Ownable {
         return _totalSupply;
     }
 
-    function initialize(address owner_)
+    function initialize(address owner_, address farmReservesAddress_)
         public
         initializer
     {
@@ -140,11 +147,17 @@ contract UFragments is ERC20Detailed, Ownable {
         rebasePausedDeprecated = false;
         tokenPausedDeprecated = false;
 
+        farmReservesVault = new TokenTimelock();
+        farmReservesVault.initialize(IERC20(address(this)), farmReservesAddress_, block.timestamp + 30 days);
+
         _totalSupply = INITIAL_FRAGMENTS_SUPPLY;
         _gonBalances[owner_] = TOTAL_GONS;
         _gonsPerFragment = TOTAL_GONS.div(_totalSupply);
 
         emit Transfer(address(0x0), owner_, _totalSupply);
+
+        // reserve the faming vault to contract. make sure owner call this func.
+        transfer(farmReservesVault, INITIAL_FARM_SUPPLY);
     }
 
     /**
