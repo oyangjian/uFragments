@@ -81,7 +81,7 @@ contract UFragmentsPolicy is Ownable {
     // The rebase window begins this many seconds into the minRebaseTimeInterval period.
     // For example if minRebaseTimeInterval is 24hrs, it represents the time of day in seconds.
     // 7200sec = 2hours 2:00 am
-    // 2:00 AM (2:00) International = 10:00 AM (10:00) China
+    // 2:00 AM (2:00) International
     uint256 public rebaseWindowOffsetSec;
 
     // The length of the time window where a rebase operation is allowed to execute, in seconds.
@@ -289,9 +289,9 @@ contract UFragmentsPolicy is Ownable {
         // deviationThreshold = 0.05e18 = 5e16
         deviationThreshold = 5 * 10 ** (DECIMALS-2);
 
-        rebaseLag = 30;
+        rebaseLag = 5;
         minRebaseTimeIntervalSec = 1 days;
-        rebaseWindowOffsetSec = 72000;  // 8PM UTC
+        rebaseWindowOffsetSec = 7200;  // 2AM UTC
         rebaseWindowLengthSec = 15 minutes;
         lastRebaseTimestampSec = 0;
         epoch = 0;
