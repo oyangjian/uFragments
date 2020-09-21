@@ -57,7 +57,7 @@ contract UFragmentsPolicy is Ownable {
     uint256 public cryptoWeight;
 
     // CPI value at the time of launch, as an 18 decimal fixed point number.
-    uint256 private baseCpi;
+    uint256 public baseCpi;
 
     // If the current exchange rate is within this fractional distance from the target, no supply
     // update is performed. Fixed point number--same format as the rate.
@@ -157,7 +157,7 @@ contract UFragmentsPolicy is Ownable {
             cryptoRate = MAX_CRYPTO_RATE_ORIGINAL;
         }
 
-        int256 supplyDelta = computeSupplyDelta2(exchangeRate, targetRate, cryptoRate);
+        int256 supplyDelta = computeSupplyDelta(exchangeRate, targetRate, cryptoRate);
 
         // Apply the Dampening factor.
         supplyDelta = supplyDelta.div(rebaseLag.toInt256Safe());
@@ -314,46 +314,8 @@ contract UFragmentsPolicy is Ownable {
         );
     }
 
-    /**
-     * @return Computes the total supply adjustment in response to the exchange rate
-     *         and the targetRate.
-     */
-    function computeSupplyDelta(uint256 rate, uint256 targetRate)
-        private
-        view
-        returns (int256)
-    {
-        if (withinDeviationThreshold(rate, targetRate)) {
-            return 0;
-        }
-
-        // supplyDelta = totalSupply * (rate - targetRate) / targetRate
-        int256 targetRateSigned = targetRate.toInt256Safe();
-        return uFrags.totalSupply().toInt256Safe()
-            .mul(rate.toInt256Safe().sub(targetRateSigned))
-            .div(targetRateSigned);
-    }
-
-    /**
-     * @param rate The current exchange rate, an 18 decimal fixed point number.
-     * @param targetRate The target exchange rate, an 18 decimal fixed point number.
-     * @return If the rate is within the deviation threshold from the target rate, returns true.
-     *         Otherwise, returns false.
-     */
-    function withinDeviationThreshold(uint256 rate, uint256 targetRate)
-        private
-        view
-        returns (bool)
-    {
-        uint256 absoluteDeviationThreshold = targetRate.mul(deviationThreshold)
-            .div(10 ** DECIMALS);
-
-        return (rate >= targetRate && rate.sub(targetRate) < absoluteDeviationThreshold)
-            || (rate < targetRate && targetRate.sub(rate) < absoluteDeviationThreshold);
-    }
-
-    function computeSupplyDelta2(uint256 rate, uint256 targetRate, uint256 cryptoRate)
-        private
+    function computeSupplyDelta(uint256 rate, uint256 targetRate, uint256 cryptoRate)
+        public
         view
         returns (int256)
     {
